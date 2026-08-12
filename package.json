@@ -1,0 +1,24 @@
+{
+	"name": "forest-warrior",
+	"version": "1.0.0",
+	"description": "Warrior of the Forest — Phaser 3 rebuild of NGAME_TEMP",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc --noEmit && vite build",
+		"preview": "vite preview",
+		"test": "vitest run",
+		"worker:dev": "wrangler dev",
+		"deploy": "npm run build && wrangler deploy"
+	},
+	"dependencies": {
+		"phaser": "^3.90.0"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^5.20260804.1",
+		"typescript": "^5.6.0",
+		"vite": "^7.0.0",
+		"vitest": "^3.0.0",
+		"wrangler": "^4.0.0"
+	}
+}

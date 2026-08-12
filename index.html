@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+	<head>
+		<meta charset="utf-8" />
+		<title>Forest Warrior</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+		<meta name="theme-color" content="#0b0f1a" />
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<link rel="icon" href="/icon-192.png" />
+		<link rel="apple-touch-icon" href="/icon-192.png" />
+		<style>
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				width: 100%;
+				height: 100%;
+				background: #0b0f1a;
+				overflow: hidden;
+				overscroll-behavior: none;
+				touch-action: none;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+			#app {
+				width: 100%;
+				height: 100%;
+			}
+			#rotate-overlay {
+				display: none;
+				position: fixed;
+				inset: 0;
+				z-index: 9999;
+				background: #0b0f1a;
+				color: #c9d6ef;
+				font-family: sans-serif;
+				font-size: 20px;
+				text-align: center;
+				align-items: center;
+				justify-content: center;
+				flex-direction: column;
+				gap: 12px;
+			}
+			@media (orientation: portrait) and (pointer: coarse) {
+				#rotate-overlay {
+					display: flex;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div id="app"></div>
+		<div id="rotate-overlay">
+			<div style="font-size: 56px">📱↻</div>
+			<div>화면을 가로로 돌려주세요</div>
+		</div>
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>

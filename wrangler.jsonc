@@ -1,0 +1,16 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "forest-warrior",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-06-01",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	// 배포 전 `wrangler kv namespace create RANK_KV` 실행 후 id를 교체할 것.
+	// wrangler dev(로컬)는 placeholder id로도 동작한다.
+	"kv_namespaces": [
+		{ "binding": "RANK_KV", "id": "REPLACE_WITH_REAL_KV_ID" }
+	],
+	"observability": { "enabled": true }
+}
