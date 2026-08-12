@@ -7,10 +7,8 @@
 		"directory": "./dist",
 		"binding": "ASSETS"
 	},
-	// 배포 전 `wrangler kv namespace create RANK_KV` 실행 후 id를 교체할 것.
-	// wrangler dev(로컬)는 placeholder id로도 동작한다.
 	"kv_namespaces": [
-		{ "binding": "RANK_KV", "id": "REPLACE_WITH_REAL_KV_ID" }
+		{ "binding": "RANK_KV", "id": "5f41b43680254683ba33efd15b8763cb" }
 	],
 	"observability": { "enabled": true }
 }
