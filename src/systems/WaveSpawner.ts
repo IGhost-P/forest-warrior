@@ -1,34 +1,78 @@
-import { STAGES, endlessWave, type MonsterSpec } from './balance';
+import { STAGES, elite, endlessWave, type MonsterSpec } from './balance';
 
 export interface SpawnOrder {
 	spec: MonsterSpec;
-	/** 스폰 기준선(히어로 앞 화면 밖)에서 추가로 떨어진 px */
+	/** 스폰 기준선에서 추가로 떨어진 px */
 	offset: number;
+	/** 1 = 히어로 앞(오른쪽), -1 = 뒤(왼쪽) */
+	side: 1 | -1;
+	/** 스폰 시점 지연 — 시간차 투입 */
+	delayMs: number;
 }
 
-/** 스테이지(0~2): 일반몹 N + 마지막에 보스 */
-export function stageSpawns(stage: number): SpawnOrder[] {
+/** 몹 속도에 ±20% 개체차 부여 */
+function jitterSpeed(spec: MonsterSpec, rng: () => number): MonsterSpec {
+	return { ...spec, speed: Math.round(spec.speed * (0.85 + rng() * 0.35)) };
+}
+
+/**
+ * 스테이지(0~2): 1~3마리 클러스터로 나눠 시간차 투입.
+ * 두 번째 클러스터부터 30% 확률로 뒤(왼쪽)에서도 나온다. 정예는 중반, 보스는 마지막.
+ */
+export function stageSpawns(stage: number, rng: () => number = Math.random): SpawnOrder[] {
 	const def = STAGES[stage];
 	const orders: SpawnOrder[] = [];
-	for (let i = 0; i < def.mobCount; i++) {
-		orders.push({ spec: { ...def.mob }, offset: i * 450 });
+
+	let placed = 0;
+	let cluster = 0;
+	while (placed < def.mobCount) {
+		const size = Math.min(1 + Math.floor(rng() * 3), def.mobCount - placed);
+		const side: 1 | -1 = cluster > 0 && rng() < 0.3 ? -1 : 1;
+		const delayMs = cluster * (1500 + rng() * 1800);
+		const base = rng() * 300;
+		for (let i = 0; i < size; i++) {
+			orders.push({
+				spec: jitterSpeed(def.mob, rng),
+				offset: base + i * (70 + rng() * 60),
+				side,
+				delayMs,
+			});
+			placed++;
+		}
+		cluster++;
 	}
-	orders.push({ spec: { ...def.boss }, offset: def.mobCount * 450 + 300 });
+
+	for (let i = 0; i < def.elites; i++) {
+		orders.push({ spec: elite(1 + stage * 0.3), offset: 150 + rng() * 250, side: 1, delayMs: 4500 + i * 5000 });
+	}
+
+	orders.push({ spec: { ...def.boss }, offset: 400, side: 1, delayMs: cluster * 1700 + 4500 });
 	return orders;
 }
 
-/** 엔드리스 웨이브: 돌진형은 멀리 흩뿌려 시차를 두고 도착 */
-export function waveSpawns(wave: number): SpawnOrder[] {
-	const specs = endlessWave(wave);
-	let walkerIdx = 0;
-	let chargerIdx = 0;
-	return specs.map(spec => {
-		if (spec.kind === 'charger') {
-			return { spec, offset: 900 + chargerIdx++ * 950 };
-		}
+/** 엔드리스 웨이브: 워커는 산발적으로, 돌진형은 양방향 기습, 보스는 마지막 */
+export function waveSpawns(wave: number, rng: () => number = Math.random): SpawnOrder[] {
+	return endlessWave(wave).map((spec): SpawnOrder => {
 		if (spec.kind === 'boss') {
-			return { spec, offset: 500 };
+			return { spec, offset: 300, side: 1, delayMs: 8000 };
 		}
-		return { spec, offset: walkerIdx++ * 380 };
+		if (spec.kind === 'charger') {
+			return {
+				spec: jitterSpeed(spec, rng),
+				offset: rng() * 400,
+				side: rng() < 0.35 ? -1 : 1,
+				delayMs: 1500 + rng() * 9000,
+			};
+		}
+		if (spec.scale > 1.2) {
+			// 정예
+			return { spec, offset: rng() * 300, side: 1, delayMs: 5000 + rng() * 4000 };
+		}
+		return {
+			spec: jitterSpeed(spec, rng),
+			offset: rng() * 500,
+			side: rng() < 0.25 ? -1 : 1,
+			delayMs: rng() * 6000,
+		};
 	});
 }

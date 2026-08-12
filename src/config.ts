@@ -1,6 +1,10 @@
 export const GAME_W = 1280;
 export const GAME_H = 720;
 
+/** 한글 UI 폰트 — 시스템 폰트 스택 (PFStardust는 한글 자모 매핑이 깨져 있어 폐기) */
+export const KOR_FONT = '"Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif';
+export const TITLE_FONT = '"LuckiestGuy", Impact, sans-serif';
+
 /** 히어로/몬스터 발이 닿는 지면 y (near 배경의 풀밭 라인에 맞춤) */
 export const GROUND_Y = 582;
 

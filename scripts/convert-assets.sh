@@ -24,10 +24,7 @@ cp "$SRC/images/monster/stage1/skeleton/dead.png"   "$OUT/sprites/skel_dead.png"
 cp "$SRC/images/monster/stage1/skeleton_boss/boss_walk.png"    "$OUT/sprites/boss_walk.png"    # 6f 300x226
 cp "$SRC/images/monster/stage1/skeleton_boss/boss_attackA.png" "$OUT/sprites/boss_attack.png"  # 8f 300x225
 cp "$SRC/images/monster/stage1/skeleton_boss/boss_dead.png"    "$OUT/sprites/boss_dead.png"    # 4f 300x225
-cp "$SRC/images/monster/monster_pink_run.png"   "$OUT/sprites/dino_pink.png"    # 8f 450x472
-cp "$SRC/images/monster/monster_yellow_run.png" "$OUT/sprites/dino_yellow.png"  # 8f 450x472
-cp "$SRC/images/monster/monster_green_run.png"  "$OUT/sprites/dino_green.png"   # 8f 450x472
-cp "$SRC/images/monster/zombie_run.png"         "$OUT/sprites/zombie_run.png"   # 10f 430x519
+# 참고: 공룡/좀비 시트는 게임 톤과 안 맞아 미사용 — 몹 변형은 해골 tint/alpha/속도로 표현
 
 echo "== 무기/이펙트 =="
 cp "$SRC/images/weapon/lv1/weapon_lv1.png"     "$OUT/sprites/bullet.png"          # 40x10
@@ -42,7 +39,7 @@ cp "$SRC/images/common/modal.png"              "$OUT/ui/modal.png"
 cp "$SRC/images/common/btn.png"                "$OUT/ui/btn.png"
 
 echo "== 폰트 =="
-cp "$SRC/fonts/PFStardust.ttf"          "$OUT/fonts/PFStardust.ttf"
+# PFStardust는 한글 자모 매핑이 깨져 있어 사용하지 않음 (한글은 시스템 폰트)
 cp "$SRC/fonts/LuckiestGuy-Regular.ttf" "$OUT/fonts/LuckiestGuy.ttf"
 
 echo "== 오디오: wav → mp3 =="

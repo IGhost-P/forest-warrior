@@ -3,14 +3,18 @@ import { GROUND_Y } from '../config';
 import type { MonsterSpec } from '../systems/balance';
 import type { Hero } from './Hero';
 
-/** 몬스터 종류별 애니메이션 키 */
-const ANIMS: Record<MonsterSpec['texture'], { run: string; attack?: string; dead?: string }> = {
+const ANIMS: Record<MonsterSpec['texture'], { run: string; attack: string; dead: string }> = {
 	skel: { run: 'skel_run', attack: 'skel_attack', dead: 'skel_dead' },
 	boss: { run: 'boss_walk', attack: 'boss_attack', dead: 'boss_dead' },
-	dino_pink: { run: 'dino_pink_run' },
-	dino_yellow: { run: 'dino_yellow_run' },
-	dino_green: { run: 'dino_green_run' },
-	zombie: { run: 'zombie_run' },
+};
+
+/**
+ * 시트 프레임 안에서 실제 아트가 차지하는 영역 (프레임 좌표, 왼쪽 보기 기준).
+ * 스켈레톤은 왼쪽, 보스는 오른쪽에 치우쳐 있어 프레임 중앙 히트박스가 어긋난다.
+ */
+const ART: Record<MonsterSpec['texture'], { cx: number; w: number; h: number }> = {
+	skel: { cx: 38, w: 42, h: 64 },
+	boss: { cx: 196, w: 96, h: 168 },
 };
 
 export class Monster extends Phaser.Physics.Arcade.Sprite {
@@ -27,7 +31,7 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 	private onDeath: (m: Monster) => void;
 
 	constructor(scene: Phaser.Scene, x: number, spec: MonsterSpec, onDeath: (m: Monster) => void) {
-		super(scene, x, GROUND_Y, spec.texture === 'skel' ? 'skel_run' : spec.texture === 'boss' ? 'boss_walk' : spec.texture, 0);
+		super(scene, x, GROUND_Y, spec.texture === 'skel' ? 'skel_run' : 'boss_walk', 0);
 		this.spec = spec;
 		this.hp = spec.hp;
 		this.onDeath = onDeath;
@@ -37,34 +41,45 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 		this.setOrigin(0.5, 1);
 		this.setScale(spec.scale);
 		if (spec.tint !== 0xffffff) this.setTint(spec.tint);
+		if (spec.alpha !== undefined) this.setAlpha(spec.alpha);
 		this.setDepth(spec.kind === 'boss' ? 45 : 40);
 		this.body.setAllowGravity(false);
 		this.body.setImmovable(true);
 
-		// 몸통 박스: 프레임의 절반 정도, 발 기준
-		const fw = this.frame.realWidth;
-		const fh = this.frame.realHeight;
-		const bw = fw * 0.5;
-		const bh = fh * 0.8;
-		this.body.setSize(bw, bh);
-		this.body.setOffset((fw - bw) / 2, fh - bh);
-
 		this.play(ANIMS[spec.texture].run);
+		this.anims.timeScale = spec.animRate ?? 1;
+		this.syncBodyToArt();
 
 		// 머리 위 HP 바
-		const barW = spec.kind === 'boss' ? 120 : 54;
+		const barW = spec.kind === 'boss' ? 120 : 54 * Math.max(1, spec.scale * 0.9);
 		this.hpBg = scene.add.rectangle(x, 0, barW, 8, 0x270721).setDepth(60);
 		this.hpFill = scene.add.rectangle(x, 0, barW - 2, 6, 0x7d0f1f).setDepth(61);
+	}
+
+	/** 히트박스를 프레임 중앙이 아닌 실제 아트 위치(flip 반영)에 맞춘다 */
+	private syncBodyToArt(): void {
+		const art = ART[this.spec.texture];
+		const fw = this.frame.realWidth;
+		const fh = this.frame.realHeight;
+		const cx = this.flipX ? fw - art.cx : art.cx;
+		this.body.setSize(art.w, art.h);
+		this.body.setOffset(cx - art.w / 2, fh - art.h);
+	}
+
+	setFlipX(value: boolean): this {
+		const changed = this.flipX !== value;
+		super.setFlipX(value);
+		if (changed && this.body) this.syncBodyToArt();
+		return this;
 	}
 
 	/** 매 프레임 호출 — 추적/공격 AI */
 	updateAI(hero: Hero, time: number): void {
 		if (this.dying) return;
 
-		// HP 바 위치 갱신
-		const top = this.y - this.displayHeight;
-		this.hpBg.setPosition(this.x, top - 12);
-		this.hpFill.setPosition(this.x, top - 12);
+		// HP 바는 히트박스(=아트) 중심을 따라간다
+		this.hpBg.setPosition(this.body.center.x, this.body.y - 12);
+		this.hpFill.setPosition(this.body.center.x, this.body.y - 12);
 
 		if (!hero.alive) {
 			this.setVelocityX(0);
@@ -72,7 +87,7 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 			return;
 		}
 
-		const dx = hero.x - this.x;
+		const dx = hero.x - this.body.center.x;
 		this.setFlipX(dx > 0); // 원본 시트는 왼쪽을 본다
 
 		if (this.spec.kind === 'charger') {
@@ -89,6 +104,7 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 		if (Math.abs(dx) > this.spec.attackRange) {
 			this.setVelocityX(Math.sign(dx) * this.spec.speed);
 			this.play(ANIMS[this.spec.texture].run, true);
+			this.anims.timeScale = this.spec.animRate ?? 1;
 		} else {
 			this.setVelocityX(0);
 			if (time >= this.nextAttackAt) this.startAttack(hero);
@@ -97,14 +113,14 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 
 	private startAttack(hero: Hero): void {
 		const animKey = ANIMS[this.spec.texture].attack;
-		if (!animKey) return;
 		this.attacking = true;
 		this.play(animKey);
+		this.anims.timeScale = this.spec.animRate ?? 1;
 
 		// 공격 모션 중반에 타격 판정 (원작의 wait(0.5) 계승)
 		this.scene.time.delayedCall(450, () => {
 			if (this.dying || !this.active || !hero.alive) return;
-			if (Math.abs(hero.x - this.x) <= this.spec.attackRange + 40) {
+			if (Math.abs(hero.x - this.body.center.x) <= this.spec.attackRange + 40) {
 				hero.takeDamage(this.spec.damage);
 				if (this.scene.cache.audio.exists('sfx_monster_attack')) {
 					this.scene.sound.play('sfx_monster_attack', { volume: 0.35 });
@@ -117,6 +133,7 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 			this.attacking = false;
 			this.nextAttackAt = this.scene.time.now + 700;
 			this.play(ANIMS[this.spec.texture].run, true);
+			this.anims.timeScale = this.spec.animRate ?? 1;
 		});
 	}
 
@@ -160,21 +177,8 @@ export class Monster extends Phaser.Physics.Arcade.Sprite {
 			this.scene.sound.play('sfx_monster_dead', { volume: 0.35 });
 		}
 
-		const deadAnim = ANIMS[this.spec.texture].dead;
-		if (deadAnim) {
-			this.play(deadAnim);
-			this.scene.tweens.add({ targets: this, alpha: 0, duration: 900, delay: 300 });
-			this.scene.time.delayedCall(1200, () => this.destroy());
-		} else {
-			// 전용 사망 시트가 없는 몹(공룡/좀비)은 스쿼시+페이드
-			this.scene.tweens.add({
-				targets: this,
-				alpha: 0,
-				scaleY: this.scale * 0.4,
-				scaleX: this.scale * 1.2,
-				duration: 350,
-				onComplete: () => this.destroy(),
-			});
-		}
+		this.play(ANIMS[this.spec.texture].dead);
+		this.scene.tweens.add({ targets: this, alpha: 0, duration: 900, delay: 300 });
+		this.scene.time.delayedCall(1200, () => this.destroy());
 	}
 }

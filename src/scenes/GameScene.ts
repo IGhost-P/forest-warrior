@@ -1,17 +1,23 @@
 import Phaser from 'phaser';
-import { ENDLESS_TINT, GAME_H, GAME_W, STAGE_TINTS } from '../config';
+import { ENDLESS_TINT, GAME_H, GAME_W, KOR_FONT, STAGE_TINTS, TITLE_FONT } from '../config';
 import { Hero } from '../entities/Hero';
 import { Monster } from '../entities/Monster';
 import { Bullet } from '../entities/Weapon';
-import type { DamageRoll } from '../systems/balance';
+import { HERO, pierceCount, type DamageRoll } from '../systems/balance';
 import { stageSpawns, waveSpawns, type SpawnOrder } from '../systems/WaveSpawner';
 import { submitScore } from '../systems/rankClient';
-
-const KOR_FONT = '"PFStardust", "Malgun Gothic", sans-serif';
-const TITLE_FONT = '"LuckiestGuy", Impact, sans-serif';
+import { bossTaunt } from '../systems/taunt';
 
 interface GameData {
 	nick: string;
+}
+
+interface VPad {
+	left: boolean;
+	right: boolean;
+	jump: boolean;
+	attack: boolean;
+	ult: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -24,8 +30,11 @@ export class GameScene extends Phaser.Scene {
 	private wave = 0;
 	private spawnComplete = false;
 	private transitioning = true;
+	private pendingSpawns = 0;
 	private gameOver = false;
 	private hitStopActive = false;
+	private ultCharge = 0;
+	private prevUltHeld = false;
 
 	private monsters!: Phaser.GameObjects.Group;
 	private bullets!: Phaser.Physics.Arcade.Group;
@@ -34,10 +43,12 @@ export class GameScene extends Phaser.Scene {
 	private bgScale = 1;
 	private sparks!: Phaser.GameObjects.Particles.ParticleEmitter;
 	private bannerText!: Phaser.GameObjects.Text;
+	private subBannerText!: Phaser.GameObjects.Text;
 	private bgm?: Phaser.Sound.BaseSound;
 
 	private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
 	private keyX!: Phaser.Input.Keyboard.Key;
+	private keyZ!: Phaser.Input.Keyboard.Key;
 	private keySpace!: Phaser.Input.Keyboard.Key;
 
 	constructor() {
@@ -52,8 +63,11 @@ export class GameScene extends Phaser.Scene {
 		this.wave = 0;
 		this.spawnComplete = false;
 		this.transitioning = true;
+		this.pendingSpawns = 0;
 		this.gameOver = false;
 		this.hitStopActive = false;
+		this.ultCharge = 0;
+		this.prevUltHeld = false;
 	}
 
 	create(): void {
@@ -83,7 +97,7 @@ export class GameScene extends Phaser.Scene {
 
 		// 그룹
 		this.monsters = this.add.group();
-		this.bullets = this.physics.add.group({ classType: Bullet, maxSize: 16, runChildUpdate: false });
+		this.bullets = this.physics.add.group({ classType: Bullet, maxSize: 24, runChildUpdate: false });
 
 		this.physics.add.overlap(this.bullets, this.monsters, (a, b) => {
 			const bullet = (a instanceof Bullet ? a : b) as Bullet;
@@ -105,19 +119,21 @@ export class GameScene extends Phaser.Scene {
 		}).setDepth(55);
 
 		// 배너
-		this.bannerText = this.add.text(GAME_W / 2, 260, '', {
+		this.bannerText = this.add.text(GAME_W / 2, 250, '', {
 			fontFamily: TITLE_FONT, fontSize: '64px', color: '#ffd54f', stroke: '#332200', strokeThickness: 10,
+		}).setOrigin(0.5).setScrollFactor(0).setDepth(100).setAlpha(0);
+		this.subBannerText = this.add.text(GAME_W / 2, 330, '', {
+			fontFamily: KOR_FONT, fontSize: '26px', color: '#ffffff', stroke: '#101420', strokeThickness: 6,
 		}).setOrigin(0.5).setScrollFactor(0).setDepth(100).setAlpha(0);
 
 		// 입력
 		this.cursors = this.input.keyboard!.createCursorKeys();
 		this.keyX = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.X);
+		this.keyZ = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
 		this.keySpace = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
 		// HUD
-		if (!this.registry.has('vpad')) {
-			this.registry.set('vpad', { left: false, right: false, jump: false, attack: false });
-		}
+		this.registry.set('vpad', { left: false, right: false, jump: false, attack: false, ult: false });
 		this.scene.launch('hud', { nick: this.nick, hero: this.hero });
 
 		// BGM
@@ -136,13 +152,18 @@ export class GameScene extends Phaser.Scene {
 	update(): void {
 		if (!this.hero) return;
 
-		const vpad = this.registry.get('vpad') as { left: boolean; right: boolean; jump: boolean; attack: boolean };
+		const vpad = this.registry.get('vpad') as VPad;
 		this.hero.update({
 			left: this.cursors.left.isDown || vpad.left,
 			right: this.cursors.right.isDown || vpad.right,
 			jump: this.cursors.up.isDown || this.keySpace.isDown || vpad.jump,
 			attack: this.keyX.isDown || vpad.attack,
 		});
+
+		// 궁극기 (엣지 트리거)
+		const ultHeld = this.keyZ.isDown || vpad.ult;
+		if (ultHeld && !this.prevUltHeld) this.tryUlt();
+		this.prevUltHeld = ultHeld;
 
 		const time = this.time.now;
 		for (const child of this.monsters.getChildren() as Monster[]) {
@@ -179,14 +200,36 @@ export class GameScene extends Phaser.Scene {
 		this.time.delayedCall(1000, () => this.placeSpawns(waveSpawns(n)));
 	}
 
+	/** 스폰 오더를 각자의 지연·방향에 맞춰 시간차 투입 */
 	private placeSpawns(orders: SpawnOrder[]): void {
 		if (this.gameOver) return;
-		const line = Math.max(this.hero.x, this.cameras.main.scrollX) + GAME_W + 120;
+		this.pendingSpawns = orders.length;
 		for (const order of orders) {
-			this.monsters.add(new Monster(this, line + order.offset, order.spec, m => this.onMonsterDeath(m)));
+			this.time.delayedCall(order.delayMs, () => {
+				if (this.gameOver) return;
+				const cam = this.cameras.main;
+				const x = order.side === 1
+					? Math.max(this.hero.x, cam.scrollX) + GAME_W + 120 + order.offset
+					: cam.scrollX - 150 - order.offset;
+				this.monsters.add(new Monster(this, x, order.spec, m => this.onMonsterDeath(m)));
+
+				if (order.spec.kind === 'boss') this.showBossTaunt();
+
+				this.pendingSpawns--;
+				if (this.pendingSpawns === 0) {
+					this.spawnComplete = true;
+					this.transitioning = false;
+				}
+			});
 		}
-		this.spawnComplete = true;
-		this.transitioning = false;
+	}
+
+	/** 보스 등장 시 도발 대사 — Chrome 내장 AI가 있으면 즉석 생성 */
+	private showBossTaunt(): void {
+		bossTaunt(this.nick).then(taunt => {
+			if (!this.scene.isActive() || this.gameOver) return;
+			this.subBanner(taunt);
+		});
 	}
 
 	private checkClear(): void {
@@ -217,16 +260,30 @@ export class GameScene extends Phaser.Scene {
 	// ── 전투 ──────────────────────────────────────────────
 
 	private fireBullet(x: number, y: number, dir: 1 | -1, roll: DamageRoll): void {
+		const pierce = pierceCount(this.hero.level);
+		this.spawnArrow(x, y, dir, roll, pierce);
+
+		// Lv7+: 후방 견제 화살 (60% 데미지)
+		if (this.hero.level >= HERO.backshotLevel) {
+			const backRoll: DamageRoll = {
+				amount: Math.max(1, Math.round(roll.amount * HERO.backshotDamageRatio)),
+				crit: roll.crit,
+			};
+			this.spawnArrow(this.hero.x - dir * 50, y, dir === 1 ? -1 : 1, backRoll, pierce);
+		}
+	}
+
+	private spawnArrow(x: number, y: number, dir: 1 | -1, roll: DamageRoll, pierce: number): void {
 		const bullet = this.bullets.get() as Bullet | null;
-		bullet?.fire(x, y, dir, roll);
+		bullet?.fire(x, y, dir, roll, pierce);
 	}
 
 	private onBulletHit(bullet: Bullet, monster: Monster): void {
-		if (!bullet.active || monster.dying) return;
-		bullet.kill();
+		if (!bullet.active || monster.dying || bullet.alreadyHit(monster)) return;
+		bullet.registerHit(monster);
 		if (this.cache.audio.exists('sfx_monster_hit')) this.sound.play('sfx_monster_hit', { volume: 0.3 });
 
-		this.popup(monster.x, monster.y - monster.displayHeight - 20, String(bullet.roll.amount), bullet.roll.crit ? '#ff9f43' : '#ffffff', bullet.roll.crit);
+		this.popup(monster.body.center.x, monster.body.y - 20, String(bullet.roll.amount), bullet.roll.crit ? '#ff9f43' : '#ffffff', bullet.roll.crit);
 		monster.takeDamage(bullet.roll.amount, bullet.dir);
 		this.hitStop(45);
 		this.cameras.main.shake(60, 0.002);
@@ -238,7 +295,7 @@ export class GameScene extends Phaser.Scene {
 		monster.explode();
 		this.cameras.main.shake(120, 0.006);
 		this.sparks.setParticleTint(0xff6b6b);
-		this.sparks.explode(14, monster.x, monster.y - monster.displayHeight / 2);
+		this.sparks.explode(14, monster.body.center.x, monster.body.center.y);
 	}
 
 	private onMonsterDeath(monster: Monster): void {
@@ -247,12 +304,42 @@ export class GameScene extends Phaser.Scene {
 		this.score += monster.spec.score;
 		this.events.emit('e-score', this.score);
 		this.hero.gainExp(monster.spec.exp);
+		this.addUltCharge(HERO.ultPerKill);
 
-		this.popup(monster.x, monster.y - monster.displayHeight - 46, `+${monster.spec.score}`, '#8ee08a', false);
+		this.popup(monster.body.center.x, monster.body.y - 46, `+${monster.spec.score}`, '#8ee08a', false);
 		const isBoss = monster.spec.kind === 'boss';
 		this.cameras.main.shake(isBoss ? 220 : 90, isBoss ? 0.009 : 0.003);
 		this.sparks.setParticleTint(monster.spec.tint !== 0xffffff ? monster.spec.tint : 0xdfe6f5);
-		this.sparks.explode(isBoss ? 28 : 12, monster.x, monster.y - monster.displayHeight / 2);
+		this.sparks.explode(isBoss ? 28 : 12, monster.body.center.x, monster.body.center.y);
+	}
+
+	// ── 궁극기 ────────────────────────────────────────────
+
+	private addUltCharge(amount: number): void {
+		this.ultCharge = Math.min(HERO.ultMax, this.ultCharge + amount);
+		this.events.emit('e-ultcharge', this.ultCharge, HERO.ultMax);
+	}
+
+	/** 해골 폭풍: 화면 안 모든 몹에게 공격력 × 6 */
+	private tryUlt(): void {
+		if (this.gameOver || !this.hero.alive || this.ultCharge < HERO.ultMax) return;
+		this.ultCharge = 0;
+		this.events.emit('e-ultcharge', 0, HERO.ultMax);
+
+		this.cameras.main.flash(250, 255, 240, 180);
+		this.cameras.main.shake(300, 0.01);
+		this.hitStop(80);
+		if (this.cache.audio.exists('sfx_hero_attack')) this.sound.play('sfx_hero_attack', { volume: 0.8 });
+
+		const damage = this.hero.attackBase * HERO.ultDamageMult;
+		const view = this.cameras.main.worldView;
+		for (const m of [...(this.monsters.getChildren() as Monster[])]) {
+			if (m.dying) continue;
+			if (m.body.center.x < view.left - 60 || m.body.center.x > view.right + 60) continue;
+			const dir: 1 | -1 = m.body.center.x >= this.hero.x ? 1 : -1;
+			this.popup(m.body.center.x, m.body.y - 20, String(damage), '#ffd54f', true);
+			m.takeDamage(damage, dir);
+		}
 	}
 
 	private onLevelUp(level: number): void {
@@ -261,6 +348,11 @@ export class GameScene extends Phaser.Scene {
 		fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
 		this.popup(this.hero.x, this.hero.y - 110, 'LEVEL UP!', '#ffd54f', true);
 		this.events.emit('e-levelup', level);
+
+		// 능력 해금 안내
+		if (level === HERO.pierceLevel) this.subBanner('관통 화살 해금! 화살이 적을 꿰뚫는다');
+		if (level === HERO.backshotLevel) this.subBanner('후방 화살 해금! 등 뒤도 지킨다');
+		if (level === HERO.pierce2Level) this.subBanner('관통 강화! 2마리까지 꿰뚫는다');
 	}
 
 	/** 명중 순간 물리 일시정지 → 타격감 */
@@ -302,6 +394,18 @@ export class GameScene extends Phaser.Scene {
 			ease: 'back.out',
 			onComplete: () => {
 				this.tweens.add({ targets: this.bannerText, alpha: 0, delay: 1000, duration: 350 });
+			},
+		});
+	}
+
+	private subBanner(text: string): void {
+		this.subBannerText.setText(text).setAlpha(0);
+		this.tweens.add({
+			targets: this.subBannerText,
+			alpha: 1,
+			duration: 220,
+			onComplete: () => {
+				this.tweens.add({ targets: this.subBannerText, alpha: 0, delay: 2400, duration: 400 });
 			},
 		});
 	}

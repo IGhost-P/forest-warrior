@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
-import { GAME_H, GAME_W } from '../config';
+import { GAME_H, GAME_W, KOR_FONT, TITLE_FONT } from '../config';
 import { fetchTop, localTop } from '../systems/rankClient';
-
-const KOR_FONT = '"PFStardust", "Malgun Gothic", sans-serif';
-const TITLE_FONT = '"LuckiestGuy", Impact, sans-serif';
 
 export class TitleScene extends Phaser.Scene {
 	private bgm?: Phaser.Sound.BaseSound;
@@ -61,7 +58,7 @@ export class TitleScene extends Phaser.Scene {
 		this.buildMuteButton();
 
 		// 조작 안내
-		this.add.text(400, 480, 'PC: ← → 이동 · ↑ 점프 · X 공격', { fontFamily: KOR_FONT, fontSize: '17px', color: '#c9d6ef' }).setOrigin(0.5);
+		this.add.text(400, 480, 'PC: ← → 이동 · ↑ 점프 · X 공격 · Z 궁극기', { fontFamily: KOR_FONT, fontSize: '17px', color: '#c9d6ef' }).setOrigin(0.5);
 
 		// 로비 BGM (오디오 잠금 해제 대응)
 		this.bgm = this.sound.add('bgm_lobby', { loop: true, volume: 0.35 });

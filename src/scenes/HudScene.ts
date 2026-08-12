@@ -1,8 +1,6 @@
 import Phaser from 'phaser';
-import { GAME_W } from '../config';
+import { GAME_W, KOR_FONT } from '../config';
 import type { Hero } from '../entities/Hero';
-
-const KOR_FONT = '"PFStardust", "Malgun Gothic", sans-serif';
 
 interface HudData {
 	nick: string;
@@ -14,24 +12,28 @@ interface VPad {
 	right: boolean;
 	jump: boolean;
 	attack: boolean;
+	ult: boolean;
 }
 
 const BAR_X = 24;
 const BAR_W = 260;
 
-/** HP/EXP/점수 + 가상 버튼 오버레이 */
+/** HP/EXP/궁극기 게이지 + 점수 + 가상 버튼 오버레이 */
 export class HudScene extends Phaser.Scene {
 	private bars!: Phaser.GameObjects.Graphics;
 	private levelText!: Phaser.GameObjects.Text;
 	private scoreText!: Phaser.GameObjects.Text;
 	private stageText!: Phaser.GameObjects.Text;
+	private ultReadyText!: Phaser.GameObjects.Text;
 
 	private hp = 1;
 	private hpMax = 1;
 	private exp = 0;
 	private expNext = 1;
+	private ult = 0;
+	private ultMax = 100;
 
-	private vpad: VPad = { left: false, right: false, jump: false, attack: false };
+	private vpad: VPad = { left: false, right: false, jump: false, attack: false, ult: false };
 
 	constructor() {
 		super('hud');
@@ -42,11 +44,13 @@ export class HudScene extends Phaser.Scene {
 		this.hpMax = data.hero.hpMax;
 		this.exp = data.hero.exp;
 		this.expNext = data.hero.expNext;
+		this.ult = 0;
 
 		this.add.text(BAR_X, 12, data.nick, { fontFamily: KOR_FONT, fontSize: '22px', color: '#ffffff', stroke: '#101420', strokeThickness: 4 });
 		this.levelText = this.add.text(BAR_X + 150, 12, `Lv.${data.hero.level}`, { fontFamily: KOR_FONT, fontSize: '22px', color: '#ffd54f', stroke: '#101420', strokeThickness: 4 });
 		this.scoreText = this.add.text(GAME_W - 80, 14, '0', { fontFamily: KOR_FONT, fontSize: '26px', color: '#ffe9b3', stroke: '#101420', strokeThickness: 4 }).setOrigin(1, 0);
 		this.stageText = this.add.text(GAME_W / 2, 20, '', { fontFamily: KOR_FONT, fontSize: '22px', color: '#c9d6ef', stroke: '#101420', strokeThickness: 4 }).setOrigin(0.5, 0);
+		this.ultReadyText = this.add.text(BAR_X + BAR_W + 12, 84, '', { fontFamily: KOR_FONT, fontSize: '15px', color: '#ffd54f', stroke: '#101420', strokeThickness: 3 }).setOrigin(0, 0.5);
 
 		this.bars = this.add.graphics();
 		this.redrawBars();
@@ -70,12 +74,18 @@ export class HudScene extends Phaser.Scene {
 		const onLevelUp = () => {
 			this.tweens.add({ targets: this.levelText, scale: 1.5, duration: 140, yoyo: true });
 		};
+		const onUlt = (charge: number, max: number) => {
+			this.ult = charge; this.ultMax = max;
+			this.ultReadyText.setText(charge >= max ? 'Z 궁극기!' : '');
+			this.redrawBars();
+		};
 
 		gs.events.on('e-hp', onHp);
 		gs.events.on('e-exp', onExp);
 		gs.events.on('e-score', onScore);
 		gs.events.on('e-stage', onStage);
 		gs.events.on('e-levelup', onLevelUp);
+		gs.events.on('e-ultcharge', onUlt);
 
 		this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
 			gs.events.off('e-hp', onHp);
@@ -83,7 +93,8 @@ export class HudScene extends Phaser.Scene {
 			gs.events.off('e-score', onScore);
 			gs.events.off('e-stage', onStage);
 			gs.events.off('e-levelup', onLevelUp);
-			this.vpad.left = this.vpad.right = this.vpad.jump = this.vpad.attack = false;
+			gs.events.off('e-ultcharge', onUlt);
+			this.vpad.left = this.vpad.right = this.vpad.jump = this.vpad.attack = this.vpad.ult = false;
 		});
 	}
 
@@ -103,6 +114,12 @@ export class HudScene extends Phaser.Scene {
 		if (expRatio > 0) {
 			g.fillStyle(0x6ee7a0, 1).fillRoundedRect(BAR_X + 2, 70, (BAR_W - 4) * expRatio, 6, 3);
 		}
+		// 궁극기 게이지
+		g.fillStyle(0x101826, 0.85).fillRoundedRect(BAR_X, 82, BAR_W, 8, 3);
+		const ultRatio = Phaser.Math.Clamp(this.ult / this.ultMax, 0, 1);
+		if (ultRatio > 0) {
+			g.fillStyle(ultRatio >= 1 ? 0xffd54f : 0xb89a3a, 1).fillRoundedRect(BAR_X + 2, 84, (BAR_W - 4) * ultRatio, 4, 2);
+		}
 	}
 
 	private buildMuteButton(): void {
@@ -120,7 +137,7 @@ export class HudScene extends Phaser.Scene {
 		const mk = (x: number, y: number, r: number, label: string, flag: keyof VPad) => {
 			const circle = this.add.circle(x, y, r, 0xffffff, 0.14).setStrokeStyle(2, 0xffffff, 0.35).setDepth(150);
 			circle.setInteractive(new Phaser.Geom.Circle(r, r, r + 14), Phaser.Geom.Circle.Contains);
-			this.add.text(x, y, label, { fontFamily: KOR_FONT, fontSize: r > 55 ? '30px' : '26px', color: '#ffffff' })
+			this.add.text(x, y, label, { fontFamily: KOR_FONT, fontSize: r > 55 ? '28px' : '22px', color: '#ffffff' })
 				.setOrigin(0.5).setAlpha(0.75).setDepth(151);
 
 			const press = () => { this.vpad[flag] = true; circle.setFillStyle(0xffffff, 0.32); };
@@ -134,5 +151,6 @@ export class HudScene extends Phaser.Scene {
 		mk(248, 610, 56, '▶', 'right');
 		mk(1032, 626, 50, '점프', 'jump');
 		mk(1170, 600, 62, '공격', 'attack');
+		mk(1152, 486, 42, '궁', 'ult');
 	}
 }

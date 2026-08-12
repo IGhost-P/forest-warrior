@@ -36,10 +36,6 @@ export class BootScene extends Phaser.Scene {
 		this.load.spritesheet('boss_walk', `${S}/boss_walk.png`, { frameWidth: 300, frameHeight: 226 });
 		this.load.spritesheet('boss_attack', `${S}/boss_attack.png`, { frameWidth: 300, frameHeight: 225 });
 		this.load.spritesheet('boss_dead', `${S}/boss_dead.png`, { frameWidth: 300, frameHeight: 225 });
-		this.load.spritesheet('dino_pink', `${S}/dino_pink.png`, { frameWidth: 450, frameHeight: 472 });
-		this.load.spritesheet('dino_yellow', `${S}/dino_yellow.png`, { frameWidth: 450, frameHeight: 472 });
-		this.load.spritesheet('dino_green', `${S}/dino_green.png`, { frameWidth: 450, frameHeight: 472 });
-		this.load.spritesheet('zombie', `${S}/zombie_run.png`, { frameWidth: 430, frameHeight: 519 });
 		this.load.spritesheet('levelup_fx', `${S}/levelup_fx.png`, { frameWidth: 180, frameHeight: 180 });
 		this.load.image('bullet', `${S}/bullet.png`);
 		this.load.image('die_fx', `${S}/die_fx.png`);
@@ -72,11 +68,9 @@ export class BootScene extends Phaser.Scene {
 		// 저장된 음소거 설정 적용
 		this.sound.mute = localStorage.getItem('fw_muted') === '1';
 
-		// 픽셀 폰트 로드 후 시작 (실패해도 시스템 폰트로 진행)
-		const fonts = [
-			new FontFace('PFStardust', 'url(assets/fonts/PFStardust.ttf)'),
-			new FontFace('LuckiestGuy', 'url(assets/fonts/LuckiestGuy.ttf)'),
-		];
+		// 타이틀 폰트 로드 후 시작 (실패해도 시스템 폰트로 진행)
+		// 한글은 시스템 폰트 사용 — PFStardust는 자모 매핑이 깨져 있어 제외
+		const fonts = [new FontFace('LuckiestGuy', 'url(assets/fonts/LuckiestGuy.ttf)')];
 		Promise.allSettled(fonts.map(f => f.load()))
 			.then(results => {
 				for (const r of results) {
@@ -102,11 +96,6 @@ export class BootScene extends Phaser.Scene {
 		a.create({ key: 'boss_walk', frames: a.generateFrameNumbers('boss_walk'), frameRate: 6, repeat: -1 });
 		a.create({ key: 'boss_attack', frames: a.generateFrameNumbers('boss_attack'), duration: 700 });
 		a.create({ key: 'boss_dead', frames: a.generateFrameNumbers('boss_dead'), duration: 900 });
-		// 돌진형
-		for (const d of ['dino_pink', 'dino_yellow', 'dino_green']) {
-			a.create({ key: `${d}_run`, frames: a.generateFrameNumbers(d), frameRate: 12, repeat: -1 });
-		}
-		a.create({ key: 'zombie_run', frames: a.generateFrameNumbers('zombie'), frameRate: 12, repeat: -1 });
 		// 이펙트
 		a.create({ key: 'levelup_fx', frames: a.generateFrameNumbers('levelup_fx'), duration: 800 });
 	}
