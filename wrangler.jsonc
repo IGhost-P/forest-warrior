@@ -7,6 +7,9 @@
 		"directory": "./dist",
 		"binding": "ASSETS"
 	},
+	"routes": [
+		{ "pattern": "forest-warrior.swyang.dev", "custom_domain": true }
+	],
 	"kv_namespaces": [
 		{ "binding": "RANK_KV", "id": "5f41b43680254683ba33efd15b8763cb" }
 	],

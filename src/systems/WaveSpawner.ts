@@ -1,4 +1,4 @@
-import { STAGES, elite, endlessWave, type MonsterSpec } from './balance';
+import { STAGES, elite, endlessWave, hopper, shooter, type MonsterSpec } from './balance';
 
 export interface SpawnOrder {
 	spec: MonsterSpec;
@@ -45,6 +45,12 @@ export function stageSpawns(stage: number, rng: () => number = Math.random): Spa
 	for (let i = 0; i < def.elites; i++) {
 		orders.push({ spec: elite(1 + stage * 0.3), offset: 150 + rng() * 250, side: 1, delayMs: 4500 + i * 5000 });
 	}
+	for (let i = 0; i < def.hoppers; i++) {
+		orders.push({ spec: hopper(1 + stage * 0.3), offset: rng() * 200, side: rng() < 0.4 ? -1 : 1, delayMs: 2500 + i * 3500 });
+	}
+	for (let i = 0; i < def.shooters; i++) {
+		orders.push({ spec: shooter(1 + stage * 0.3), offset: 100 + rng() * 150, side: 1, delayMs: 3500 + i * 4000 });
+	}
 
 	orders.push({ spec: { ...def.boss }, offset: 400, side: 1, delayMs: cluster * 1700 + 4500 });
 	return orders;
@@ -56,13 +62,16 @@ export function waveSpawns(wave: number, rng: () => number = Math.random): Spawn
 		if (spec.kind === 'boss') {
 			return { spec, offset: 300, side: 1, delayMs: 8000 };
 		}
-		if (spec.kind === 'charger') {
+		if (spec.kind === 'charger' || spec.kind === 'hopper') {
 			return {
 				spec: jitterSpeed(spec, rng),
 				offset: rng() * 400,
 				side: rng() < 0.35 ? -1 : 1,
 				delayMs: 1500 + rng() * 9000,
 			};
+		}
+		if (spec.kind === 'shooter') {
+			return { spec, offset: 100 + rng() * 200, side: 1, delayMs: 2000 + rng() * 6000 };
 		}
 		if (spec.scale > 1.2) {
 			// 정예

@@ -62,3 +62,39 @@ export class Bullet extends Phaser.Physics.Arcade.Sprite {
 		if (this.x < view.left - 100 || this.x > view.right + 100) this.kill();
 	}
 }
+
+/** 저격 해골의 뼈화살 — 히어로를 향해 일직선으로 날아온다 */
+export class EnemyBullet extends Phaser.Physics.Arcade.Sprite {
+	declare body: Phaser.Physics.Arcade.Body;
+
+	damage = 0;
+
+	constructor(scene: Phaser.Scene, x: number, y: number) {
+		super(scene, x, y, 'bullet');
+		this.setScale(1.5);
+		this.setDepth(47);
+		this.setTint(0xff5566);
+	}
+
+	fire(x: number, y: number, dir: 1 | -1, damage: number): void {
+		this.enableBody(true, x, y, true, true);
+		this.body.setAllowGravity(false);
+		this.damage = damage;
+		this.setTint(0xff5566);
+		this.setFlipX(dir === -1);
+		this.body.setSize(15, 10);
+		this.body.setOffset(dir === 1 ? 25 : 0, 0);
+		this.setVelocityX(dir * 520);
+	}
+
+	kill(): void {
+		this.disableBody(true, true);
+	}
+
+	preUpdate(time: number, delta: number): void {
+		super.preUpdate(time, delta);
+		if (!this.active) return;
+		const view = this.scene.cameras.main.worldView;
+		if (this.x < view.left - 100 || this.x > view.right + 100) this.kill();
+	}
+}

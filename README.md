@@ -2,8 +2,15 @@
 
 **Warrior of the Forest** — [NGAME_TEMP](https://github.com/IGhost-P/NGAME_TEMP)의 Phaser 3 + TypeScript 재구현.
 
+플레이: https://forest-warrior.swyang.dev (또는 https://forest-warrior.dndb3599.workers.dev)
+
 - 모바일 지원: 가상 버튼, Scale.FIT, PWA(홈 화면 설치·오프라인)
-- 스테이지 1~3 + **엔드리스 웨이브 모드** (방치돼 있던 공룡/좀비 스프라이트가 돌진형 몹으로 등장)
+- 스테이지 1~3 + **엔드리스 웨이브 모드**
+- **해골 6종**: 일반 / 유령(반투명 관통 돌진) / 광폭(고속 돌진) / 정예(대형 탱커) / 도약(점프 접근) / 저격(원거리 뼈화살)
+- **보스 패턴**: 근접 베기 · 부하 소환 · 예고 후 대시 돌진 · HP 30% 분노 모드
+- **AI 보스 디렉터**: 구간 전투 데이터(명중률·피격량·궁 사용)를 Chrome 내장 AI(Prompt API)에 주고
+  보스의 공격성·소환/돌진 성향·체력 보정을 결정. AI가 없으면 규칙 기반 fallback
+- 히어로 성장: Lv4 관통 화살 → Lv7 후방 화살 → Lv9 관통 강화, 궁극기 '해골 폭풍'(Z)
 - 랭킹: Cloudflare Workers + KV (`/api/rank`)
 - 타격감: hit-stop, 카메라 셰이크, 데미지 팝업(크리티컬), 넉백, 파티클
 

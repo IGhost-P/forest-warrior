@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
 import { ENDLESS_TINT, GAME_H, GAME_W, KOR_FONT, STAGE_TINTS, TITLE_FONT } from '../config';
 import { Hero } from '../entities/Hero';
-import { Monster } from '../entities/Monster';
-import { Bullet } from '../entities/Weapon';
-import { HERO, pierceCount, type DamageRoll } from '../systems/balance';
+import { Monster, type MonsterCtx } from '../entities/Monster';
+import { Bullet, EnemyBullet } from '../entities/Weapon';
+import { HERO, STAGES, pierceCount, type DamageRoll } from '../systems/balance';
+import { bossDirector, type CombatStats } from '../systems/director';
 import { stageSpawns, waveSpawns, type SpawnOrder } from '../systems/WaveSpawner';
 import { submitScore } from '../systems/rankClient';
-import { bossTaunt } from '../systems/taunt';
 
 interface GameData {
 	nick: string;
@@ -19,6 +19,8 @@ interface VPad {
 	attack: boolean;
 	ult: boolean;
 }
+
+const MAX_MONSTERS = 25;
 
 export class GameScene extends Phaser.Scene {
 	hero!: Hero;
@@ -36,8 +38,18 @@ export class GameScene extends Phaser.Scene {
 	private ultCharge = 0;
 	private prevUltHeld = false;
 
+	// AI 디렉터용 전투 통계 (구간 = 스테이지/웨이브)
+	private statShots = 0;
+	private statHits = 0;
+	private statDamageTaken = 0;
+	private statUltUsed = 0;
+	private segmentStartAt = 0;
+	private lastHeroHp = 0;
+
 	private monsters!: Phaser.GameObjects.Group;
 	private bullets!: Phaser.Physics.Arcade.Group;
+	private enemyBullets!: Phaser.Physics.Arcade.Group;
+	private monsterCtx!: MonsterCtx;
 	private bgFar!: Phaser.GameObjects.TileSprite;
 	private bgNear!: Phaser.GameObjects.TileSprite;
 	private bgScale = 1;
@@ -68,6 +80,10 @@ export class GameScene extends Phaser.Scene {
 		this.hitStopActive = false;
 		this.ultCharge = 0;
 		this.prevUltHeld = false;
+		this.statShots = 0;
+		this.statHits = 0;
+		this.statDamageTaken = 0;
+		this.statUltUsed = 0;
 	}
 
 	create(): void {
@@ -84,11 +100,16 @@ export class GameScene extends Phaser.Scene {
 		// 히어로
 		this.hero = new Hero(this, 200, 1, {
 			onFire: (x, y, dir, roll) => this.fireBullet(x, y, dir, roll),
-			onHpChange: (hp, max) => this.events.emit('e-hp', hp, max),
+			onHpChange: (hp, max) => {
+				if (hp < this.lastHeroHp) this.statDamageTaken += this.lastHeroHp - hp;
+				this.lastHeroHp = hp;
+				this.events.emit('e-hp', hp, max);
+			},
 			onExpChange: (exp, next, level) => this.events.emit('e-exp', exp, next, level),
 			onLevelUp: level => this.onLevelUp(level),
 			onDied: () => this.endGame(),
 		});
+		this.lastHeroHp = this.hero.hp;
 
 		const cam = this.cameras.main;
 		cam.startFollow(this.hero, true, 0.15, 0);
@@ -98,6 +119,17 @@ export class GameScene extends Phaser.Scene {
 		// 그룹
 		this.monsters = this.add.group();
 		this.bullets = this.physics.add.group({ classType: Bullet, maxSize: 24, runChildUpdate: false });
+		this.enemyBullets = this.physics.add.group({ classType: EnemyBullet, maxSize: 24, runChildUpdate: false });
+
+		// 몬스터 상호작용 훅
+		this.monsterCtx = {
+			onDeath: m => this.onMonsterDeath(m),
+			fireEnemyBullet: (x, y, dir, damage) => {
+				const b = this.enemyBullets.get() as EnemyBullet | null;
+				b?.fire(x, y, dir, damage);
+			},
+			summon: x => this.summonMinions(x),
+		};
 
 		this.physics.add.overlap(this.bullets, this.monsters, (a, b) => {
 			const bullet = (a instanceof Bullet ? a : b) as Bullet;
@@ -106,6 +138,12 @@ export class GameScene extends Phaser.Scene {
 		});
 		this.physics.add.overlap(this.hero, this.monsters, (_h, m) => {
 			this.onHeroTouch(m as Monster);
+		});
+		this.physics.add.overlap(this.hero, this.enemyBullets, (_h, b) => {
+			const eb = b as EnemyBullet;
+			if (!eb.active) return;
+			if (this.hero.alive && !this.hero.invulnerable) this.hero.takeDamage(eb.damage);
+			eb.kill();
 		});
 
 		// 파티클
@@ -180,10 +218,28 @@ export class GameScene extends Phaser.Scene {
 
 	// ── 스테이지/웨이브 흐름 ──────────────────────────────
 
+	private resetSegmentStats(): void {
+		this.statShots = 0;
+		this.statHits = 0;
+		this.statDamageTaken = 0;
+		this.statUltUsed = 0;
+		this.segmentStartAt = this.time.now;
+	}
+
+	private snapshotStats(): CombatStats {
+		return {
+			segmentMs: this.time.now - this.segmentStartAt,
+			damageTaken: this.statDamageTaken,
+			accuracy: this.statShots > 0 ? this.statHits / this.statShots : 0.4,
+			ultUsed: this.statUltUsed,
+		};
+	}
+
 	private startStage(idx: number): void {
 		this.stageIdx = idx;
 		this.transitioning = true;
 		this.spawnComplete = false;
+		this.resetSegmentStats();
 		this.applyTint(STAGE_TINTS[idx]);
 		this.banner(`STAGE ${idx + 1}`);
 		this.events.emit('e-stage', `STAGE ${idx + 1}`);
@@ -194,42 +250,70 @@ export class GameScene extends Phaser.Scene {
 		this.wave = n;
 		this.transitioning = true;
 		this.spawnComplete = false;
+		this.resetSegmentStats();
 		this.applyTint(ENDLESS_TINT);
 		this.banner(`WAVE ${n}`);
 		this.events.emit('e-stage', `WAVE ${n}`);
 		this.time.delayedCall(1000, () => this.placeSpawns(waveSpawns(n)));
 	}
 
-	/** 스폰 오더를 각자의 지연·방향에 맞춰 시간차 투입 */
+	/** 스폰 오더를 각자의 지연·방향에 맞춰 시간차 투입. 보스는 AI 디렉터를 거친다 */
 	private placeSpawns(orders: SpawnOrder[]): void {
 		if (this.gameOver) return;
 		this.pendingSpawns = orders.length;
 		for (const order of orders) {
 			this.time.delayedCall(order.delayMs, () => {
 				if (this.gameOver) return;
-				const cam = this.cameras.main;
-				const x = order.side === 1
-					? Math.max(this.hero.x, cam.scrollX) + GAME_W + 120 + order.offset
-					: cam.scrollX - 150 - order.offset;
-				this.monsters.add(new Monster(this, x, order.spec, m => this.onMonsterDeath(m)));
-
-				if (order.spec.kind === 'boss') this.showBossTaunt();
-
-				this.pendingSpawns--;
-				if (this.pendingSpawns === 0) {
-					this.spawnComplete = true;
-					this.transitioning = false;
+				if (order.spec.kind === 'boss') {
+					// 이 구간의 플레이 데이터를 보고 보스 성향·난이도 결정
+					bossDirector(this.snapshotStats()).then(mod => {
+						if (this.gameOver || !this.scene.isActive()) return;
+						const spec = { ...order.spec, bossMod: mod, hp: Math.round(order.spec.hp * mod.hpMult) };
+						this.monsters.add(new Monster(this, this.spawnX(order), spec, this.monsterCtx));
+						if (mod.note) this.subBanner(mod.note);
+						this.spawnPlaced();
+					});
+				} else {
+					this.monsters.add(new Monster(this, this.spawnX(order), order.spec, this.monsterCtx));
+					this.spawnPlaced();
 				}
 			});
 		}
 	}
 
-	/** 보스 등장 시 도발 대사 — Chrome 내장 AI가 있으면 즉석 생성 */
-	private showBossTaunt(): void {
-		bossTaunt(this.nick).then(taunt => {
-			if (!this.scene.isActive() || this.gameOver) return;
-			this.subBanner(taunt);
-		});
+	/** 화면 가장자리 바로 밖에서 스폰 — 시간차는 delayMs가 담당하므로 거리는 짧게 */
+	private spawnX(order: SpawnOrder): number {
+		const cam = this.cameras.main;
+		return order.side === 1
+			? cam.scrollX + GAME_W + 100 + order.offset
+			: cam.scrollX - 100 - order.offset;
+	}
+
+	private spawnPlaced(): void {
+		this.pendingSpawns--;
+		if (this.pendingSpawns === 0) {
+			this.spawnComplete = true;
+			this.transitioning = false;
+		}
+	}
+
+	/** 보스 소환 패턴: 현재 스테이지 몹의 축소판 2마리. 화면 과밀 시 스킵 */
+	private summonMinions(x: number): void {
+		if (this.gameOver) return;
+		const aliveCount = (this.monsters.getChildren() as Monster[]).filter(m => !m.dying).length;
+		if (aliveCount >= MAX_MONSTERS) return;
+		const base = STAGES[Math.min(this.stageIdx, STAGES.length - 1)].mob;
+		for (const dx of [-150, 150]) {
+			const spec = {
+				...base,
+				hp: Math.round(base.hp * 0.6),
+				score: Math.round(base.score * 0.5),
+				exp: Math.round(base.exp * 0.5),
+			};
+			this.monsters.add(new Monster(this, x + dx, spec, this.monsterCtx));
+			this.sparks.setParticleTint(0xc9d6ef);
+			this.sparks.explode(8, x + dx, this.hero.y - 40);
+		}
 	}
 
 	private checkClear(): void {
@@ -260,6 +344,7 @@ export class GameScene extends Phaser.Scene {
 	// ── 전투 ──────────────────────────────────────────────
 
 	private fireBullet(x: number, y: number, dir: 1 | -1, roll: DamageRoll): void {
+		this.statShots++;
 		const pierce = pierceCount(this.hero.level);
 		this.spawnArrow(x, y, dir, roll, pierce);
 
@@ -281,6 +366,7 @@ export class GameScene extends Phaser.Scene {
 	private onBulletHit(bullet: Bullet, monster: Monster): void {
 		if (!bullet.active || monster.dying || bullet.alreadyHit(monster)) return;
 		bullet.registerHit(monster);
+		this.statHits++;
 		if (this.cache.audio.exists('sfx_monster_hit')) this.sound.play('sfx_monster_hit', { volume: 0.3 });
 
 		this.popup(monster.body.center.x, monster.body.y - 20, String(bullet.roll.amount), bullet.roll.crit ? '#ff9f43' : '#ffffff', bullet.roll.crit);
@@ -290,12 +376,27 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	private onHeroTouch(monster: Monster): void {
-		if (monster.spec.kind !== 'charger' || monster.dying || !this.hero.alive || this.hero.invulnerable) return;
-		this.hero.takeDamage(monster.spec.damage);
-		monster.explode();
-		this.cameras.main.shake(120, 0.006);
-		this.sparks.setParticleTint(0xff6b6b);
-		this.sparks.explode(14, monster.body.center.x, monster.body.center.y);
+		if (monster.dying || !this.hero.alive || this.hero.invulnerable) return;
+
+		if (monster.spec.kind === 'charger') {
+			this.hero.takeDamage(monster.spec.damage);
+			monster.explode();
+			this.cameras.main.shake(120, 0.006);
+			this.sparks.setParticleTint(0xff6b6b);
+			this.sparks.explode(14, monster.body.center.x, monster.body.center.y);
+			return;
+		}
+		if (monster.spec.kind === 'hopper') {
+			// 도약 해골은 부딪혀도 죽지 않고 튕겨난다
+			this.hero.takeDamage(monster.spec.damage);
+			monster.x -= Math.sign(this.hero.x - monster.x) * 80;
+			this.cameras.main.shake(90, 0.004);
+			return;
+		}
+		if (monster.spec.kind === 'boss' && monster.charging) {
+			this.hero.takeDamage(monster.spec.damage);
+			this.cameras.main.shake(160, 0.008);
+		}
 	}
 
 	private onMonsterDeath(monster: Monster): void {
@@ -320,10 +421,21 @@ export class GameScene extends Phaser.Scene {
 		this.events.emit('e-ultcharge', this.ultCharge, HERO.ultMax);
 	}
 
-	/** 해골 폭풍: 화면 안 모든 몹에게 공격력 × 6 */
+	/** 해골 폭풍: 화면 안팎 ±400px 모든 몹에게 공격력 × 6. 대상이 없으면 게이지 보존 */
 	private tryUlt(): void {
 		if (this.gameOver || !this.hero.alive || this.ultCharge < HERO.ultMax) return;
+
+		const view = this.cameras.main.worldView;
+		const targets = (this.monsters.getChildren() as Monster[]).filter(m =>
+			!m.dying && m.body.center.x >= view.left - 400 && m.body.center.x <= view.right + 400,
+		);
+		if (targets.length === 0) {
+			this.subBanner('궁극기: 사거리에 적이 없다!');
+			return;
+		}
+
 		this.ultCharge = 0;
+		this.statUltUsed++;
 		this.events.emit('e-ultcharge', 0, HERO.ultMax);
 
 		this.cameras.main.flash(250, 255, 240, 180);
@@ -332,10 +444,7 @@ export class GameScene extends Phaser.Scene {
 		if (this.cache.audio.exists('sfx_hero_attack')) this.sound.play('sfx_hero_attack', { volume: 0.8 });
 
 		const damage = this.hero.attackBase * HERO.ultDamageMult;
-		const view = this.cameras.main.worldView;
-		for (const m of [...(this.monsters.getChildren() as Monster[])]) {
-			if (m.dying) continue;
-			if (m.body.center.x < view.left - 60 || m.body.center.x > view.right + 60) continue;
+		for (const m of targets) {
 			const dir: 1 | -1 = m.body.center.x >= this.hero.x ? 1 : -1;
 			this.popup(m.body.center.x, m.body.y - 20, String(damage), '#ffd54f', true);
 			m.takeDamage(damage, dir);

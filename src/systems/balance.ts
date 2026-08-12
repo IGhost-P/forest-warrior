@@ -60,7 +60,23 @@ export function rollDamage(base: number, rng: () => number = Math.random): Damag
 	return { amount: Math.max(1, Math.round(base * spread * (crit ? HERO.critMult : 1))), crit };
 }
 
-export type MonsterKind = 'walker' | 'boss' | 'charger';
+export type MonsterKind = 'walker' | 'boss' | 'charger' | 'hopper' | 'shooter';
+
+/** AI 디렉터가 보스에게 적용하는 성향/난이도 보정 */
+export interface BossMod {
+	/** 1(느슨)~3(맹공) — 패턴 빈도와 이동속도에 반영 */
+	aggression: number;
+	/** 0~2 — 부하 소환 패턴 가중치 */
+	summonBias: number;
+	/** 0~2 — 돌진 패턴 가중치 */
+	chargeBias: number;
+	/** 0.8~1.4 — 보스 체력 배율 */
+	hpMult: number;
+	/** 플레이어에게 보여줄 짧은 경고 문구 */
+	note: string;
+}
+
+export const DEFAULT_BOSS_MOD: BossMod = { aggression: 2, summonBias: 1, chargeBias: 1, hpMult: 1, note: '' };
 
 export interface MonsterSpec {
 	texture: 'skel' | 'boss';
@@ -77,17 +93,19 @@ export interface MonsterSpec {
 	alpha?: number;
 	/** 광폭 해골용 애니메이션 배속 */
 	animRate?: number;
+	/** 보스 전용 — AI 디렉터 보정 */
+	bossMod?: BossMod;
 }
 
 const NO_TINT = 0xffffff;
 const r = Math.round;
 
 function skel(hp: number, damage: number, score: number, exp: number, tint: number): MonsterSpec {
-	return { texture: 'skel', kind: 'walker', hp, damage, score, exp, speed: 70, scale: 1, tint, attackRange: 80 };
+	return { texture: 'skel', kind: 'walker', hp, damage, score, exp, speed: 110, scale: 1, tint, attackRange: 80 };
 }
 
 function boss(hp: number, damage: number, score: number, exp: number, tint: number): MonsterSpec {
-	return { texture: 'boss', kind: 'boss', hp, damage, score, exp, speed: 45, scale: 1, tint, attackRange: 150 };
+	return { texture: 'boss', kind: 'boss', hp, damage, score, exp, speed: 60, scale: 1, tint, attackRange: 150 };
 }
 
 /** 유령 해골: 반투명·푸른빛, 멈추지 않고 스쳐 지나가며 접촉 데미지 */
@@ -95,7 +113,7 @@ export function ghost(mult = 1): MonsterSpec {
 	return {
 		texture: 'skel', kind: 'charger',
 		hp: r(45 * mult), damage: r(10 * mult), score: r(250 * mult), exp: 30,
-		speed: 150, scale: 1, tint: 0x9fd8ff, alpha: 0.55, animRate: 1.4, attackRange: 0,
+		speed: 175, scale: 1, tint: 0x9fd8ff, alpha: 0.55, animRate: 1.4, attackRange: 0,
 	};
 }
 
@@ -104,7 +122,7 @@ export function berserker(mult = 1): MonsterSpec {
 	return {
 		texture: 'skel', kind: 'charger',
 		hp: r(75 * mult), damage: r(16 * mult), score: r(350 * mult), exp: 40,
-		speed: 215, scale: 1.08, tint: 0xff6b6b, animRate: 1.9, attackRange: 0,
+		speed: 235, scale: 1.08, tint: 0xff6b6b, animRate: 1.9, attackRange: 0,
 	};
 }
 
@@ -113,7 +131,25 @@ export function elite(mult = 1): MonsterSpec {
 	return {
 		texture: 'skel', kind: 'walker',
 		hp: r(300 * mult), damage: r(20 * mult), score: r(400 * mult), exp: 60,
-		speed: 45, scale: 1.45, tint: 0xd8c9a3, animRate: 0.8, attackRange: 100,
+		speed: 60, scale: 1.45, tint: 0xd8c9a3, animRate: 0.8, attackRange: 100,
+	};
+}
+
+/** 도약 해골: 초록빛, 포물선 점프로 접근하며 접촉 데미지 */
+export function hopper(mult = 1): MonsterSpec {
+	return {
+		texture: 'skel', kind: 'hopper',
+		hp: r(55 * mult), damage: r(12 * mult), score: r(200 * mult), exp: 28,
+		speed: 200, scale: 1, tint: 0x8de08a, animRate: 1.2, attackRange: 0,
+	};
+}
+
+/** 저격 해골: 보랏빛, 멀리 멈춰 서서 뼈화살을 쏜다 */
+export function shooter(mult = 1): MonsterSpec {
+	return {
+		texture: 'skel', kind: 'shooter',
+		hp: r(50 * mult), damage: r(10 * mult), score: r(300 * mult), exp: 35,
+		speed: 90, scale: 1, tint: 0xc59fff, attackRange: 480,
 	};
 }
 
@@ -121,15 +157,17 @@ export interface StageDef {
 	mob: MonsterSpec;
 	boss: MonsterSpec;
 	mobCount: number;
-	/** 스테이지에 섞여 나오는 정예 해골 수 */
+	/** 스테이지에 섞여 나오는 특수 해골 수 */
 	elites: number;
+	hoppers: number;
+	shooters: number;
 }
 
-/** 스테이지 1~3 (0-indexed). 2·3은 몹 tint 변형 + 수치 상승 + 정예 등장 */
+/** 스테이지 1~3 (0-indexed). 뒤로 갈수록 tint 변형 + 수치 상승 + 특수 해골 다양화 */
 export const STAGES: StageDef[] = [
-	{ mob: skel(60, 8, 100, 22, NO_TINT), boss: boss(600, 18, 1000, 120, NO_TINT), mobCount: 10, elites: 0 },
-	{ mob: skel(110, 12, 150, 30, 0xffe066), boss: boss(1100, 26, 2000, 170, 0xffd54f), mobCount: 10, elites: 1 },
-	{ mob: skel(180, 16, 220, 40, 0xff8fa3), boss: boss(1800, 34, 3000, 240, 0xff7a90), mobCount: 10, elites: 2 },
+	{ mob: skel(60, 8, 100, 22, NO_TINT), boss: boss(600, 18, 1000, 120, NO_TINT), mobCount: 10, elites: 0, hoppers: 1, shooters: 0 },
+	{ mob: skel(110, 12, 150, 30, 0xffe066), boss: boss(1100, 26, 2000, 170, 0xffd54f), mobCount: 10, elites: 1, hoppers: 2, shooters: 1 },
+	{ mob: skel(180, 16, 220, 40, 0xff8fa3), boss: boss(1800, 34, 3000, 240, 0xff7a90), mobCount: 10, elites: 2, hoppers: 2, shooters: 2 },
 ];
 
 /** 엔드리스 웨이브 n(1부터)의 스폰 스펙. 수·체력·데미지·점수가 함께 오른다 */
@@ -154,6 +192,12 @@ export function endlessWave(n: number): MonsterSpec[] {
 
 	const berserkers = Math.min(Math.floor(n / 2), 5);
 	for (let i = 0; i < berserkers; i++) specs.push(berserker(hpM));
+
+	const hoppers = Math.min(1 + Math.floor(n / 2), 5);
+	for (let i = 0; i < hoppers; i++) specs.push(hopper(hpM));
+
+	const shooters = Math.min(Math.floor((n + 1) / 3), 4);
+	for (let i = 0; i < shooters; i++) specs.push(shooter(hpM));
 
 	const elites = Math.min(Math.floor(n / 4), 3);
 	for (let i = 0; i < elites; i++) specs.push(elite(hpM));
