@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_W, KOR_FONT } from '../config';
+import { GAME_H, GAME_W, KOR_FONT } from '../config';
 import type { Hero } from '../entities/Hero';
 
 interface HudData {
@@ -25,6 +25,9 @@ export class HudScene extends Phaser.Scene {
 	private scoreText!: Phaser.GameObjects.Text;
 	private stageText!: Phaser.GameObjects.Text;
 	private ultReadyText!: Phaser.GameObjects.Text;
+	private monsterText!: Phaser.GameObjects.Text;
+	private leftIndicator!: Phaser.GameObjects.Text;
+	private rightIndicator!: Phaser.GameObjects.Text;
 
 	private hp = 1;
 	private hpMax = 1;
@@ -50,6 +53,11 @@ export class HudScene extends Phaser.Scene {
 		this.levelText = this.add.text(BAR_X + 150, 12, `Lv.${data.hero.level}`, { fontFamily: KOR_FONT, fontSize: '22px', color: '#ffd54f', stroke: '#101420', strokeThickness: 4 });
 		this.scoreText = this.add.text(GAME_W - 80, 14, '0', { fontFamily: KOR_FONT, fontSize: '26px', color: '#ffe9b3', stroke: '#101420', strokeThickness: 4 }).setOrigin(1, 0);
 		this.stageText = this.add.text(GAME_W / 2, 20, '', { fontFamily: KOR_FONT, fontSize: '22px', color: '#c9d6ef', stroke: '#101420', strokeThickness: 4 }).setOrigin(0.5, 0);
+		this.monsterText = this.add.text(GAME_W / 2, 50, '', { fontFamily: KOR_FONT, fontSize: '17px', color: '#ffb3ba', stroke: '#101420', strokeThickness: 4 }).setOrigin(0.5, 0);
+		// 화면 밖 몬스터 방향 안내 (좌/우 가장자리)
+		const indStyle = { fontFamily: KOR_FONT, fontSize: '24px', color: '#ffb3ba', stroke: '#101420', strokeThickness: 5 };
+		this.leftIndicator = this.add.text(14, GAME_H / 2 - 60, '', indStyle).setOrigin(0, 0.5).setAlpha(0.9);
+		this.rightIndicator = this.add.text(GAME_W - 14, GAME_H / 2 - 60, '', indStyle).setOrigin(1, 0.5).setAlpha(0.9);
 		this.ultReadyText = this.add.text(BAR_X + BAR_W + 12, 84, '', { fontFamily: KOR_FONT, fontSize: '15px', color: '#ffd54f', stroke: '#101420', strokeThickness: 3 }).setOrigin(0, 0.5);
 
 		this.bars = this.add.graphics();
@@ -79,6 +87,11 @@ export class HudScene extends Phaser.Scene {
 			this.ultReadyText.setText(charge >= max ? 'Z 궁극기!' : '');
 			this.redrawBars();
 		};
+		const onMonsters = (remaining: number, offLeft: number, offRight: number) => {
+			this.monsterText.setText(remaining > 0 ? `남은 몬스터 ${remaining}` : '');
+			this.leftIndicator.setText(offLeft > 0 ? `◀ ${offLeft}` : '');
+			this.rightIndicator.setText(offRight > 0 ? `${offRight} ▶` : '');
+		};
 
 		gs.events.on('e-hp', onHp);
 		gs.events.on('e-exp', onExp);
@@ -86,6 +99,7 @@ export class HudScene extends Phaser.Scene {
 		gs.events.on('e-stage', onStage);
 		gs.events.on('e-levelup', onLevelUp);
 		gs.events.on('e-ultcharge', onUlt);
+		gs.events.on('e-monsters', onMonsters);
 
 		this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
 			gs.events.off('e-hp', onHp);
@@ -94,6 +108,7 @@ export class HudScene extends Phaser.Scene {
 			gs.events.off('e-stage', onStage);
 			gs.events.off('e-levelup', onLevelUp);
 			gs.events.off('e-ultcharge', onUlt);
+			gs.events.off('e-monsters', onMonsters);
 			this.vpad.left = this.vpad.right = this.vpad.jump = this.vpad.attack = this.vpad.ult = false;
 		});
 	}

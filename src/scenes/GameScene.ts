@@ -41,6 +41,8 @@ export class GameScene extends Phaser.Scene {
 	private runId = 0;
 	/** 진행 워치독: 살아있는 몹을 마지막으로 본 시각 */
 	private lastAliveAt = 0;
+	/** HUD 몬스터 카운트 중복 emit 방지 캐시 */
+	private lastMonsterInfo = '';
 
 	// AI 디렉터용 전투 통계 (구간 = 스테이지/웨이브)
 	private statShots = 0;
@@ -209,7 +211,10 @@ export class GameScene extends Phaser.Scene {
 		this.prevUltHeld = ultHeld;
 
 		const time = this.time.now;
+		const camLeft = this.cameras.main.scrollX;
 		let aliveCount = 0;
+		let offLeft = 0;
+		let offRight = 0;
 		for (const child of this.monsters.getChildren() as Monster[]) {
 			child.updateAI(this.hero, time);
 			if (!child.dying) {
@@ -217,9 +222,19 @@ export class GameScene extends Phaser.Scene {
 				// 낙오 몹 회수: 너무 멀리 떨어졌으면 화면 밖 가장자리로 데려온다
 				if (Math.abs(child.x - this.hero.x) > 3000) {
 					const dir = child.x > this.hero.x ? 1 : -1;
-					child.x = this.cameras.main.scrollX + (dir === 1 ? GAME_W + 200 : -200);
+					child.x = camLeft + (dir === 1 ? GAME_W + 200 : -200);
 				}
+				if (child.x < camLeft - 40) offLeft++;
+				else if (child.x > camLeft + GAME_W + 40) offRight++;
 			}
+		}
+
+		// HUD 몬스터 카운트 (남은 총량 = 살아있는 몹 + 아직 안 나온 스폰)
+		const remaining = aliveCount + Math.max(0, this.pendingSpawns);
+		const info = `${remaining}:${offLeft}:${offRight}`;
+		if (info !== this.lastMonsterInfo) {
+			this.lastMonsterInfo = info;
+			this.events.emit('e-monsters', remaining, offLeft, offRight);
 		}
 
 		// 파랄랙스
