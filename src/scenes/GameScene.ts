@@ -3,7 +3,7 @@ import { ENDLESS_TINT, GAME_H, GAME_W, KOR_FONT, STAGE_TINTS, TITLE_FONT } from 
 import { Hero } from '../entities/Hero';
 import { Monster, type MonsterCtx } from '../entities/Monster';
 import { Bullet, EnemyBullet } from '../entities/Weapon';
-import { HERO, STAGES, pierceCount, type DamageRoll } from '../systems/balance';
+import { DEFAULT_BOSS_MOD, HERO, STAGES, pierceCount, type DamageRoll } from '../systems/balance';
 import { bossDirector, type CombatStats } from '../systems/director';
 import { stageSpawns, waveSpawns, type SpawnOrder } from '../systems/WaveSpawner';
 import { submitScore } from '../systems/rankClient';
@@ -37,6 +37,10 @@ export class GameScene extends Phaser.Scene {
 	private hitStopActive = false;
 	private ultCharge = 0;
 	private prevUltHeld = false;
+	/** 재시작 시 증가 — 이전 판의 비동기 콜백(보스 디렉터 등)이 새 판을 오염시키지 못하게 하는 토큰 */
+	private runId = 0;
+	/** 진행 워치독: 살아있는 몹을 마지막으로 본 시각 */
+	private lastAliveAt = 0;
 
 	// AI 디렉터용 전투 통계 (구간 = 스테이지/웨이브)
 	private statShots = 0;
@@ -68,6 +72,7 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	init(data: GameData): void {
+		this.runId++;
 		this.nick = data.nick || localStorage.getItem('fw_nick') || 'HERO';
 		this.score = 0;
 		this.phase = 'stage';
@@ -204,8 +209,17 @@ export class GameScene extends Phaser.Scene {
 		this.prevUltHeld = ultHeld;
 
 		const time = this.time.now;
+		let aliveCount = 0;
 		for (const child of this.monsters.getChildren() as Monster[]) {
 			child.updateAI(this.hero, time);
+			if (!child.dying) {
+				aliveCount++;
+				// 낙오 몹 회수: 너무 멀리 떨어졌으면 화면 밖 가장자리로 데려온다
+				if (Math.abs(child.x - this.hero.x) > 3000) {
+					const dir = child.x > this.hero.x ? 1 : -1;
+					child.x = this.cameras.main.scrollX + (dir === 1 ? GAME_W + 200 : -200);
+				}
+			}
 		}
 
 		// 파랄랙스
@@ -213,7 +227,26 @@ export class GameScene extends Phaser.Scene {
 		this.bgFar.tilePositionX = (scrollX * 0.25) / this.bgScale;
 		this.bgNear.tilePositionX = scrollX / this.bgScale;
 
-		this.checkClear();
+		this.watchdog(aliveCount);
+		this.checkClear(aliveCount);
+	}
+
+	/**
+	 * 진행 워치독 — 어떤 부기(카운터) 누수가 생겨도 게임이 멈추지 않게 하는 최후 방어선.
+	 * 살아있는 몹이 0인 상태가 10초 지속되면 스폰 상태를 강제 복구해 다음 단계로 진행시킨다.
+	 */
+	private watchdog(aliveCount: number): void {
+		const now = this.time.now;
+		if (aliveCount > 0 || this.gameOver) {
+			this.lastAliveAt = now;
+			return;
+		}
+		if (now - this.lastAliveAt > 10_000) {
+			this.lastAliveAt = now;
+			this.pendingSpawns = 0;
+			this.spawnComplete = true;
+			this.transitioning = false;
+		}
 	}
 
 	// ── 스테이지/웨이브 흐름 ──────────────────────────────
@@ -236,9 +269,11 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	private startStage(idx: number): void {
+		if (this.gameOver) return;
 		this.stageIdx = idx;
 		this.transitioning = true;
 		this.spawnComplete = false;
+		this.lastAliveAt = this.time.now;
 		this.resetSegmentStats();
 		this.applyTint(STAGE_TINTS[idx]);
 		this.banner(`STAGE ${idx + 1}`);
@@ -247,9 +282,11 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	private startWave(n: number): void {
+		if (this.gameOver) return;
 		this.wave = n;
 		this.transitioning = true;
 		this.spawnComplete = false;
+		this.lastAliveAt = this.time.now;
 		this.resetSegmentStats();
 		this.applyTint(ENDLESS_TINT);
 		this.banner(`WAVE ${n}`);
@@ -265,14 +302,19 @@ export class GameScene extends Phaser.Scene {
 			this.time.delayedCall(order.delayMs, () => {
 				if (this.gameOver) return;
 				if (order.spec.kind === 'boss') {
-					// 이 구간의 플레이 데이터를 보고 보스 성향·난이도 결정
-					bossDirector(this.snapshotStats()).then(mod => {
-						if (this.gameOver || !this.scene.isActive()) return;
-						const spec = { ...order.spec, bossMod: mod, hp: Math.round(order.spec.hp * mod.hpMult) };
-						this.monsters.add(new Monster(this, this.spawnX(order), spec, this.monsterCtx));
-						if (mod.note) this.subBanner(mod.note);
-						this.spawnPlaced();
-					});
+					// 이 구간의 플레이 데이터를 보고 보스 성향·난이도 결정.
+					// 어떤 경우에도(실패 포함) 보스는 반드시 스폰되고 카운터는 정확히 1회 감소한다.
+					const run = this.runId;
+					bossDirector(this.snapshotStats())
+						.catch(() => ({ ...DEFAULT_BOSS_MOD }))
+						.then(mod => {
+							// 이전 판의 늦은 응답이 새 판을 오염시키지 않도록 런 토큰 검사
+							if (run !== this.runId || this.gameOver || !this.scene.isActive()) return;
+							const spec = { ...order.spec, bossMod: mod, hp: Math.round(order.spec.hp * mod.hpMult) };
+							this.monsters.add(new Monster(this, this.spawnX(order), spec, this.monsterCtx));
+							if (mod.note) this.subBanner(mod.note);
+							this.spawnPlaced();
+						});
 				} else {
 					this.monsters.add(new Monster(this, this.spawnX(order), order.spec, this.monsterCtx));
 					this.spawnPlaced();
@@ -291,7 +333,8 @@ export class GameScene extends Phaser.Scene {
 
 	private spawnPlaced(): void {
 		this.pendingSpawns--;
-		if (this.pendingSpawns === 0) {
+		this.lastAliveAt = this.time.now;
+		if (this.pendingSpawns <= 0) {
 			this.spawnComplete = true;
 			this.transitioning = false;
 		}
@@ -316,9 +359,8 @@ export class GameScene extends Phaser.Scene {
 		}
 	}
 
-	private checkClear(): void {
+	private checkClear(aliveCount: number): void {
 		if (this.gameOver || this.transitioning || !this.spawnComplete) return;
-		const aliveCount = (this.monsters.getChildren() as Monster[]).filter(m => !m.dying).length;
 		if (aliveCount > 0) return;
 
 		this.transitioning = true;
